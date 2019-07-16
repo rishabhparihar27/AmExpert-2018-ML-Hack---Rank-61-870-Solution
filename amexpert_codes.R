@@ -28,7 +28,7 @@ test$is_click <- sample(0:1 , size = nrow(test) , replace = T)
 #combining train and test data
 alldata <- bind_rows(list(train, test))
 
-#Imputing missing values
+#lots of missing values
 alldata$product_category_2 <- NULL
 
 #Imputing with mode
@@ -61,7 +61,6 @@ head(history)
 #Number of times the user has viewed a particular product
 #Number of distinct products that user has viewed
 
-
 user_product_views <- mutate(history , viewed = ifelse(action %in% c("view") , 1 , 0) , 
                                        interested = ifelse(action %in% c("interest") , 1 , 0),
                                        month_day = substr(history$DateTime , 6,10) )%>%
@@ -71,24 +70,6 @@ user_product_views <- mutate(history , viewed = ifelse(action %in% c("view") , 1
                                         last_viewed_date = max(DateTime))
 
 user_tot_products_viewed <- user_product_views%>%group_by(user_id)%>%summarise(number_of_products = n_distinct(product))
-
-# user_product_view_pivot_table <- cast(user_product_views[1:3] , user_id ~ product ,fun.aggregate = sum ,  fill = 0) 
-# user_product_view_pivot_table <- data.frame(user_product_view_pivot_table)
-# head(user_product_view_pivot_table)
-# 
-# #Applying k means clustering on this data
-# 
-# set.seed(1)
-# 
-# clusters <- kmeans(user_product_view_pivot_table[,-1] , centers = 10)
-# user_product_view_pivot_table$cluster <- clusters$cluster
-
-
-# user_surfing_hour_day <- mutate(history , month_day = substr(DateTime , 6,10))%>%
-#                      group_by(user_id , month_day)%>%summarise(in_time = min(DateTime) , 
-#                                                                out_time = max(DateTime))
-# 
-# user_surfing_hour_day <- mutate(user_surfing_hour_day , time_spent = difftime(out_time , in_time , units = "mins"))
 
 #Number of maximum views and interests of a particular product in a day
 user_product_frequent_views <- mutate(history , viewed = ifelse(action %in% c("view") , 1 , 0) , 
@@ -120,8 +101,6 @@ alldata_new <- merge(alldata_new , user_online_days , by = c("user_id") ,
                      all.x = T , all.y = F, sort = F)
 
 alldata_new <- merge(alldata_new , user_tot_products_viewed , by = "user_id" , all.x = T , all.y = F , sort = F)
-
-alldata_new <- merge(alldata_new , user_product_view_pivot_table[,c(1,12)] , by = c("user_id") , all.x = T , all.y = F , sort = F)
 
 alldata_new <- merge(alldata_new , user_tot_views_interests , by = c("user_id") , all.x = T , all.y = F , sort = F)
 
@@ -205,7 +184,7 @@ alldata_new <- merge(alldata_new , product_event_rate , by = "product" , all.x =
 alldata_new <- merge(alldata_new , gender_event_rate , by = "gender" , all.x = T , all.y = F, sort = F)
 
 #Imputing missing values
-alldata_new[is.na(alldata_new)] <- 0
+alldata_new[is.na(alldata_new)] <- -111
 alldata_new$day <- as.numeric(substr(alldata_new$DateTime , 10 , 11))
 names(alldata_new)
 
@@ -213,8 +192,8 @@ names(alldata_new)
 ohe_feats <- c("product" , "gender" , "webpage_id" , "campaign_id" , "cluster" , "user_group_id" ,
                "city_development_index")
 
-# 
 alldata_new <- dummy.data.frame(alldata_new , names = ohe_feats)
+
 #dropping variables
 
 drop_vars <- c("user_id","session_id" , "DateTime" , "product_category_1",
@@ -242,6 +221,7 @@ names(alldata_new) <- make.names(names(alldata_new))
 train_final <- alldata_new[(1:nrow(train)) , ]
 test_final <- alldata_new[-(1:nrow(train)) , ]
 test_final <- as.data.frame(test_final)
+
 #train validation split
 train_set <- as.data.frame(train_final[train_final$day < 6,])
 prop.table(table(train_set$is_click))
@@ -252,6 +232,7 @@ dep_var <- "is_click"
 validation_set <- as.data.frame(train_final[train_final$day >=6,])
 prop.table(table(validation_set$is_click))
 
+##function to get auc value
 get_auc <- function(label  , probs){
   library(ROCR)
   AUC <- ROCR::performance(ROCR::prediction(probs,label) , "auc")@y.values[[1]]
@@ -273,12 +254,11 @@ head(train_set[,top_20_vars])
 
 
 #Predicting on validation data
+
 xgb_valid <- predict(xgb_model , data.matrix(validation_set[,indep_vars]))
 
 xgb_auc <- get_auc(label = validation_set$is_click , probs = xgb_valid)
 xgb_auc
-
-#0.5730
 
 #predicting on test set
 xgb_test <- predict(xgb_model ,data.matrix(test_final[,indep_vars]))
@@ -288,7 +268,7 @@ head(xgb_test)
 submit <- read.csv("sample_submission_2s8l9nF.csv")
 
 xgb_sub_1 <- data.frame(session_id = submit$session_id , is_click = xgb_test)
-write.csv(xgb_sub_1 , "xgb_submission_valid_0.5935.csv" , row.names = F)
+write.csv(xgb_sub_1 , "xgb_submission_12.csv" , row.names = F)
 
 ##Fitting glm model
 
@@ -296,9 +276,11 @@ glm_model <- glm(is_click ~ . , data = mutate(train_set , is_click = as.factor(i
 
 summary(glm_model)
 
+#Predicting on train data
 glm_train_auc <- get_auc(train_set$is_click , glm_model$fitted.values)
 glm_train_auc
 
+#Predicting on validation data
 glm_valid <- predict(glm_model , validation_set , type = "response")
 
 glm_valid_auc <- get_auc(validation_set$is_click , glm_valid)
@@ -311,19 +293,19 @@ cor(glm_valid , xgb_valid)
 submit <- read.csv("sample_submission_2s8l9nF.csv")
 
 glm_sub_1 <- data.frame(session_id = submit$session_id , is_click = glm_test)
-write.csv(glm_sub_1 , "glm_submission_valid_0.5928.csv" , row.names = F)
+write.csv(glm_sub_1 , "glm_submission_valid.csv" , row.names = F)
 
 cor(xgb_valid , glm_valid)
 
 #ensemble glm and xgboost
-glm_xgb_valid<- (0.65*glm_valid + 0.35*xgb_valid)
+glm_xgb_valid<- (0.60*glm_valid + 0.40*xgb_valid)
 get_auc(label = validation_set$is_click , probs =  glm_xgb_valid)
 
 #Reading submission file
 submit <- read.csv("sample_submission_2s8l9nF.csv")
 
 glm_xgb_sub_1 <- data.frame(session_id = submit$session_id , is_click = (0.4*xgb_test + 0.6*glm_test))
-write.csv(glm_xgb_sub_1 , "glm_xgb_submission_valid_0.5952.csv" , row.names = F)
+write.csv(glm_xgb_sub_1 , "glm_xgb_submission_7.csv" , row.names = F)
 
 
 
